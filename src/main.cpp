@@ -56,16 +56,18 @@ namespace {
         // remove mesa var in favor of config
         unsetenv("MESA_VK_WSI_PRESENT_MODE"); // NOLINT
 
-        // write latest file
+        // write latest file (use TMPDIR on Android if set)
         try {
-            std::ofstream latest("/tmp/lsfg-vk_last", std::ios::trunc);
+            const char* tmpdir = getenv("TMPDIR");
+            std::string latestPath = tmpdir ? std::string(tmpdir) + "/lsfg-vk_last" : "/tmp/lsfg-vk_last";
+            std::ofstream latest(latestPath, std::ios::trunc);
             if (!latest.is_open())
-                throw std::runtime_error("Failed to open /tmp/lsfg-vk_last for writing");
+                throw std::runtime_error("Failed to open " + latestPath + " for writing");
             latest << "exe: " << name.first << '\n';
             latest << "comm: " << name.second << '\n';
             latest << "pid: " << getpid() << '\n';
             if (!latest.good())
-                throw std::runtime_error("Failed to write to /tmp/lsfg-vk_last");
+                throw std::runtime_error("Failed to write to " + latestPath);
         } catch (const std::exception& e) {
             std::cerr << "lsfg-vk: An error occurred while trying to write the latest file, exiting:\n";
             std::cerr << "- " << e.what() << '\n';
