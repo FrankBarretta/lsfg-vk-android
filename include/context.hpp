@@ -1,12 +1,17 @@
 #pragma once
 
+#include <vulkan/vulkan_core.h>
+
+#ifdef __ANDROID__
+#include <vulkan/vulkan_android.h>
+#include <android/hardware_buffer.h>
+#endif
+
 #include "hooks.hpp"
 #include "mini/commandbuffer.hpp"
 #include "mini/commandpool.hpp"
 #include "mini/image.hpp"
 #include "mini/semaphore.hpp"
-
-#include <vulkan/vulkan_core.h>
 
 #include <array>
 #include <cstdint>

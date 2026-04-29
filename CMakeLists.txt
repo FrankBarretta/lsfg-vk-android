@@ -50,6 +50,11 @@ target_link_libraries(lsfg-vk PRIVATE
     pe-parse dxbc toml11
     lsfg-vk-framegen)
 
+if(ANDROID)
+    target_link_libraries(lsfg-vk PRIVATE android)
+    target_include_directories(lsfg-vk PRIVATE "${ANDROID_NDK}/sources/android/native_app_glue")
+endif()
+
 get_target_property(TOML11_INCLUDE_DIRS toml11 INTERFACE_INCLUDE_DIRECTORIES)
 target_include_directories(lsfg-vk SYSTEM PRIVATE ${TOML11_INCLUDE_DIRS})
 
