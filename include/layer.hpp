@@ -2,6 +2,11 @@
 
 #include <vulkan/vulkan_core.h>
 
+#ifdef __ANDROID__
+#include <vulkan/vulkan_android.h>
+#include <android/hardware_buffer.h>
+#endif
+
 #include <cstdint>
 
 namespace Layer {
@@ -171,6 +176,14 @@ namespace Layer {
         VkDevice device,
         const VkSemaphoreGetFdInfoKHR* pGetFdInfo,
         int* pFd);
+
+#ifdef __ANDROID__
+    /// Call to the original vkGetAndroidHardwareBufferPropertiesANDROID function.
+    VkResult ovkGetAndroidHardwareBufferPropertiesANDROID(
+        VkDevice device,
+        const AHardwareBuffer* hardwareBuffer,
+        VkAndroidHardwareBufferPropertiesANDROID* pProperties);
+#endif
 
     /// Call to the original vkGetDeviceQueue function.
     void ovkGetDeviceQueue(

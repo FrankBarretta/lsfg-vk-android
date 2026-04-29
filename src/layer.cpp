@@ -3,6 +3,11 @@
 #include "config/config.hpp"
 #include "hooks.hpp"
 
+#ifdef __ANDROID__
+#include <android/hardware_buffer.h>
+#include <android/log.h>
+#endif
+
 #include <vulkan/vk_layer.h>
 #include <vulkan/vulkan_core.h>
 
@@ -49,6 +54,9 @@ namespace {
     PFN_vkDestroySemaphore next_vkDestroySemaphore{};
     PFN_vkGetMemoryFdKHR next_vkGetMemoryFdKHR{};
     PFN_vkGetSemaphoreFdKHR next_vkGetSemaphoreFdKHR{};
+#ifdef __ANDROID__
+    PFN_vkGetAndroidHardwareBufferPropertiesANDROID next_vkGetAndroidHardwareBufferPropertiesANDROID{};
+#endif
     PFN_vkGetDeviceQueue next_vkGetDeviceQueue{};
     PFN_vkQueueSubmit next_vkQueueSubmit{};
     PFN_vkCmdPipelineBarrier next_vkCmdPipelineBarrier{};
@@ -219,6 +227,12 @@ namespace {
             success &= initDeviceFunc(*pDevice, "vkCreateSemaphore", &next_vkCreateSemaphore);
             success &= initDeviceFunc(*pDevice, "vkDestroySemaphore", &next_vkDestroySemaphore);
             success &= initDeviceFunc(*pDevice, "vkGetSemaphoreFdKHR", &next_vkGetSemaphoreFdKHR);
+#ifdef __ANDROID__
+            // AHB function is optional — not all ICDs (e.g. Vortek wrapper) support it.
+            // If unavailable, the AHB image path will fail at point-of-use, but
+            // the layer still initializes so it can fall back gracefully.
+            initDeviceFunc(*pDevice, "vkGetAndroidHardwareBufferPropertiesANDROID", &next_vkGetAndroidHardwareBufferPropertiesANDROID);
+#endif
             success &= initDeviceFunc(*pDevice, "vkGetDeviceQueue", &next_vkGetDeviceQueue);
             success &= initDeviceFunc(*pDevice, "vkQueueSubmit", &next_vkQueueSubmit);
             success &= initDeviceFunc(*pDevice, "vkCmdPipelineBarrier", &next_vkCmdPipelineBarrier);
@@ -479,6 +493,15 @@ namespace Layer {
             int* pFd) {
         return next_vkGetSemaphoreFdKHR(device, pGetFdInfo, pFd);
     }
+
+#ifdef __ANDROID__
+    VkResult ovkGetAndroidHardwareBufferPropertiesANDROID(
+            VkDevice device,
+            const AHardwareBuffer* hardwareBuffer,
+            VkAndroidHardwareBufferPropertiesANDROID* pProperties) {
+        return next_vkGetAndroidHardwareBufferPropertiesANDROID(device, hardwareBuffer, pProperties);
+    }
+#endif
 
     void ovkGetDeviceQueue(
             VkDevice device,
