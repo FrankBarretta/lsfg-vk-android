@@ -4,6 +4,7 @@
 #include "core/instance.hpp"
 #include "common/exception.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -17,6 +18,14 @@ const std::vector<const char*> requiredExtensions = {
 Instance::Instance() {
     volkInitialize();
 
+    // Query the highest Vulkan version the loader/driver supports, then cap
+    // at 1.3 (which is all we need).  Using a version the loader doesn't
+    // support causes vkCreateInstance to return VK_ERROR_INCOMPATIBLE_DRIVER.
+    uint32_t loaderVersion = VK_API_VERSION_1_1;
+    if (vkEnumerateInstanceVersion)
+        vkEnumerateInstanceVersion(&loaderVersion);
+    const uint32_t apiVersion = std::min(loaderVersion, (uint32_t)VK_API_VERSION_1_3);
+
     // create Vulkan instance
     const VkApplicationInfo appInfo{
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -24,7 +33,7 @@ Instance::Instance() {
         .applicationVersion = VK_MAKE_VERSION(0, 0, 1),
         .pEngineName = "lsfg-vk-base",
         .engineVersion = VK_MAKE_VERSION(0, 0, 1),
-        .apiVersion = VK_API_VERSION_1_3
+        .apiVersion = apiVersion
     };
     const VkInstanceCreateInfo createInfo{
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
