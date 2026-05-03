@@ -13,6 +13,14 @@
 #include <string>
 #include <vector>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#define LSFG_FRAMEGEN_LOGI(...) \
+    __android_log_print(ANDROID_LOG_INFO, "lsfg-vk-framegen", __VA_ARGS__)
+#else
+#define LSFG_FRAMEGEN_LOGI(...) do {} while (0)
+#endif
+
 using namespace LSFG::Core;
 
 const std::vector<const char*> requiredExtensions = {
@@ -123,6 +131,19 @@ Device::Device(const Instance& instance, uint64_t deviceUUID) {
     // shaderFloat16 feature explicitly enabled. We probe and unconditionally
     // enable it when supported — there's no downside on FP32-only sessions and
     // it lets the FP16 path "just work" when the user toggles it on.
+    //
+    // Also probe the core 1.0 storage-image features. The LSFG compute shader
+    // chain reads from and writes to R16G16B16A16_SFLOAT storage images
+    // (gamma/delta/generate); on Mali (Bifrost/Valhall) this is rejected at
+    // dispatch time and surfaces as VK_ERROR_DEVICE_LOST on the first present
+    // unless `shaderStorageImageExtendedFormats` is explicitly enabled at
+    // device-create time. The same applies to image read/write without an
+    // explicit `format` qualifier in SPIR-V — without
+    // `shaderStorageImageReadWithoutFormat` / `WriteWithoutFormat` the driver
+    // is allowed to UB the dispatch. Enable each only when the physical device
+    // advertises it (the validation layers reject create_device with features
+    // the device doesn't support, and several PowerVR/Adreno revisions only
+    // expose a subset).
     VkPhysicalDeviceShaderFloat16Int8Features fp16Probe{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
     };
@@ -132,6 +153,38 @@ Device::Device(const Instance& instance, uint64_t deviceUUID) {
     };
     vkGetPhysicalDeviceFeatures2(*physicalDevice, &featsProbe);
     const bool hasFloat16 = fp16Probe.shaderFloat16 == VK_TRUE;
+    const VkPhysicalDeviceFeatures& probedCore = featsProbe.features;
+
+    // Build the core feature struct we'll request. We must only request what
+    // the device supports — anything else fails vkCreateDevice. All four
+    // fields below are required by the LSFG shader chain on Mali; absence
+    // would manifest as DEVICE_LOST on first dispatch.
+    VkPhysicalDeviceFeatures enabledCoreFeatures{};
+    enabledCoreFeatures.shaderStorageImageExtendedFormats =
+        probedCore.shaderStorageImageExtendedFormats;
+    enabledCoreFeatures.shaderStorageImageReadWithoutFormat =
+        probedCore.shaderStorageImageReadWithoutFormat;
+    enabledCoreFeatures.shaderStorageImageWriteWithoutFormat =
+        probedCore.shaderStorageImageWriteWithoutFormat;
+    // shaderInt16 commonly accompanies FP16 paths; harmless on FP32-only sessions
+    // and required by some Lossless.dll FP16 shader variants.
+    enabledCoreFeatures.shaderInt16 = probedCore.shaderInt16;
+
+    // Diagnostic: log which storage-image features were probed vs. enabled.
+    // Tagged "lsfg-vk-framegen" so it's easy to correlate with session logs.
+    // On Mali-G57 this is the load-bearing line: if any of the *Format* fields
+    // shows probed=0, the device cannot legally execute LSFG's compute chain
+    // and presentContext will hit DEVICE_LOST regardless of this fix.
+    LSFG_FRAMEGEN_LOGI(
+        "Device features probe: storageImageExtendedFormats=%d, "
+        "storageImageReadWithoutFormat=%d, storageImageWriteWithoutFormat=%d, "
+        "shaderInt16=%d, shaderFloat16=%d, robustness2=%d",
+        (int)probedCore.shaderStorageImageExtendedFormats,
+        (int)probedCore.shaderStorageImageReadWithoutFormat,
+        (int)probedCore.shaderStorageImageWriteWithoutFormat,
+        (int)probedCore.shaderInt16,
+        (int)hasFloat16,
+        (int)hasRobustness2);
 
     // create logical device
     const float queuePriority{1.0F}; // highest priority
@@ -155,6 +208,14 @@ Device::Device(const Instance& instance, uint64_t deviceUUID) {
         .timelineSemaphore = VK_TRUE,
         .vulkanMemoryModel = VK_TRUE
     };
+    // Use VkPhysicalDeviceFeatures2 in pNext (mutually exclusive with
+    // pEnabledFeatures per spec) so we can chain the core features alongside
+    // the 1.2/1.3/robustness2 structs above.
+    VkPhysicalDeviceFeatures2 enabledFeatures2{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &features12,
+        .features = enabledCoreFeatures,
+    };
     const VkDeviceQueueCreateInfo computeQueueDesc{
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
         .queueFamilyIndex = *computeFamilyIdx,
@@ -163,11 +224,13 @@ Device::Device(const Instance& instance, uint64_t deviceUUID) {
     };
     const VkDeviceCreateInfo deviceCreateInfo{
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = &features12,
+        .pNext = &enabledFeatures2,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &computeQueueDesc,
         .enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size()),
         .ppEnabledExtensionNames = enabledExtensions.data()
+        // pEnabledFeatures intentionally NULL: enabledFeatures2 carries them
+        // via pNext (the spec forbids both being non-null).
     };
     VkDevice deviceHandle{};
     res = vkCreateDevice(*physicalDevice, &deviceCreateInfo, nullptr, &deviceHandle);
