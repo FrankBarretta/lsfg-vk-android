@@ -17,9 +17,24 @@
 #include <android/log.h>
 #define LSFG_FRAMEGEN_LOGI(...) \
     __android_log_print(ANDROID_LOG_INFO, "lsfg-vk-framegen", __VA_ARGS__)
+#define LSFG_FRAMEGEN_LOGW(...) \
+    __android_log_print(ANDROID_LOG_WARN, "lsfg-vk-framegen", __VA_ARGS__)
 #else
 #define LSFG_FRAMEGEN_LOGI(...) do {} while (0)
+#define LSFG_FRAMEGEN_LOGW(...) do {} while (0)
 #endif
+
+// Build-fingerprint stamp. The string changes whenever this file is edited
+// (via __DATE__/__TIME__), which forces NDK/CMake to detect a real source-level
+// change rather than reusing the cached `lsfg-vk-framegen.a`. The variable is
+// referenced from Device::Device so the linker can't dead-strip it; the value
+// also lands in the runtime log so users/devs can confirm a fresh build is on
+// the device by grepping for "framegen build stamp".
+namespace LSFG::Core {
+extern const char* kFramegenBuildStamp;
+const char* kFramegenBuildStamp =
+    "framegen build stamp: " __DATE__ " " __TIME__;
+}
 
 using namespace LSFG::Core;
 
@@ -55,6 +70,14 @@ const Image& Device::getFallbackDescriptorImage() const {
 }
 
 Device::Device(const Instance& instance, uint64_t deviceUUID) {
+    // First line of any framegen device init: prints the build stamp at INFO.
+    // Functionality-irrelevant by design — its only purpose is to give field
+    // testers a single grep-able marker that proves the loaded .so contains
+    // the storage-image / DEVICE_LOST fix series. If the user hits DEVICE_LOST
+    // and this line is absent from logcat, their APK was linked against a
+    // stale cached `lsfg-vk-framegen.a` and a clean rebuild is required.
+    LSFG_FRAMEGEN_LOGI("Entering Device::Device — %s", kFramegenBuildStamp);
+
     // get all physical devices
     uint32_t deviceCount{};
     auto res = vkEnumeratePhysicalDevices(instance.handle(), &deviceCount, nullptr);
@@ -175,6 +198,11 @@ Device::Device(const Instance& instance, uint64_t deviceUUID) {
     // On Mali-G57 this is the load-bearing line: if any of the *Format* fields
     // shows probed=0, the device cannot legally execute LSFG's compute chain
     // and presentContext will hit DEVICE_LOST regardless of this fix.
+    //
+    // The build stamp below is referenced (and printed) here so the linker
+    // can't dead-strip it and so users running an older cached .so can verify
+    // by log-grep whether the build they have actually contains this fix.
+    LSFG_FRAMEGEN_LOGI("%s", kFramegenBuildStamp);
     LSFG_FRAMEGEN_LOGI(
         "Device features probe: storageImageExtendedFormats=%d, "
         "storageImageReadWithoutFormat=%d, storageImageWriteWithoutFormat=%d, "
@@ -185,6 +213,17 @@ Device::Device(const Instance& instance, uint64_t deviceUUID) {
         (int)probedCore.shaderInt16,
         (int)hasFloat16,
         (int)hasRobustness2);
+    if (probedCore.shaderStorageImageExtendedFormats != VK_TRUE) {
+        // Hard warning: this is the feature LSFG's R16G16B16A16_SFLOAT storage
+        // image accesses depend on. Without it, dispatch is undefined behavior
+        // on Mali/Adreno and surfaces as DEVICE_LOST on first present. There's
+        // no shader-side workaround we can apply at runtime; logging it loudly
+        // gives upstream / users a clear pointer to the actual root cause.
+        LSFG_FRAMEGEN_LOGW(
+            "shaderStorageImageExtendedFormats=FALSE — LSFG compute chain "
+            "expects R16G16B16A16_SFLOAT storage; first dispatch will likely "
+            "DEVICE_LOST on this device");
+    }
 
     // create logical device
     const float queuePriority{1.0F}; // highest priority
