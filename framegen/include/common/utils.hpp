@@ -20,6 +20,22 @@
 namespace LSFG::Utils {
 
     ///
+    /// Compat shim for vkCmdPipelineBarrier2.
+    ///
+    /// On Vulkan 1.3 devices and on 1.1/1.2 with VK_KHR_synchronization2 the
+    /// real vkCmdPipelineBarrier2 (or its KHR alias) is invoked. On older
+    /// drivers that lack sync2 entirely (e.g. Mali-G57 MC2 with API 1.1.177),
+    /// we translate the dependency info into the legacy sync1 barrier flags
+    /// and call vkCmdPipelineBarrier instead. The framegen pipeline only uses
+    /// barrier flags whose low 32 bits are identical between sync1 and sync2
+    /// (COMPUTE_SHADER, TRANSFER, TOP_OF_PIPE, BOTTOM_OF_PIPE, SHADER_READ,
+    /// SHADER_WRITE, TRANSFER_READ/WRITE), so a direct truncation is safe.
+    ///
+    /// Picks the implementation lazily based on which entry points volk
+    /// resolved against the framegen device.
+    void cmdPipelineBarrier2(VkCommandBuffer cb, const VkDependencyInfo* dep);
+
+    ///
     /// Insert memory barriers for images in a command buffer.
     ///
     /// @throws std::logic_error if the command buffer is not in Recording state

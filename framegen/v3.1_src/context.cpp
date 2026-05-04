@@ -74,7 +74,7 @@ void emit_external_barriers(const Core::CommandBuffer& buf,
         .imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size()),
         .pImageMemoryBarriers = barriers.data(),
     };
-    vkCmdPipelineBarrier2(buf.handle(), &dependencyInfo);
+    LSFG::Utils::cmdPipelineBarrier2(buf.handle(), &dependencyInfo);
 }
 
 } // namespace
