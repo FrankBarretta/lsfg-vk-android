@@ -68,6 +68,7 @@ namespace {
             {
                 "VK_KHR_external_memory",
                 "VK_KHR_external_memory_fd",
+		"VK_EXT_external_memory_dma_buf",
                 "VK_KHR_external_semaphore",
                 "VK_KHR_external_semaphore_fd"
             }

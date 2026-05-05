@@ -33,6 +33,8 @@ namespace Mini {
         /// @throws LSFG::vulkan_error if object creation fails.
         ///
         Semaphore(VkDevice device, int* fd);
+	/// Export to SYNC_FD
+	void exportSyncFd(VkDevice device, int* fd);
 
         /// Get the Vulkan handle.
         [[nodiscard]] auto handle() const { return *this->semaphore; }

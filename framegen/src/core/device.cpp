@@ -17,8 +17,10 @@ using namespace LSFG::Core;
 
 const std::vector<const char*> requiredExtensions = {
 #ifndef __ANDROID__
+    "VK_KHR_external_memory",
     "VK_KHR_external_memory_fd",
     "VK_KHR_external_semaphore_fd",
+    "VK_EXT_external_memory_dma_buf"
 #else
     // On Android we share via AHardwareBuffer, not opaque FDs.
     "VK_ANDROID_external_memory_android_hardware_buffer",

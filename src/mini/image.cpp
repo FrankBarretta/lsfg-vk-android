@@ -22,7 +22,7 @@ Image::Image(VkDevice device, VkPhysicalDevice physicalDevice,
     // create image
     const VkExternalMemoryImageCreateInfo externalInfo{
         .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
-        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT
     };
     const VkImageCreateInfo desc{
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -74,7 +74,7 @@ Image::Image(VkDevice device, VkPhysicalDevice physicalDevice,
     const VkExportMemoryAllocateInfo exportInfo{
         .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
         .pNext = &dedicatedInfo,
-        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT
     };
     const VkMemoryAllocateInfo allocInfo{
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
@@ -95,7 +95,7 @@ Image::Image(VkDevice device, VkPhysicalDevice physicalDevice,
     const VkMemoryGetFdInfoKHR fdInfo{
         .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
         .memory = memoryHandle,
-        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT_KHR,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
     };
     res = Layer::ovkGetMemoryFdKHR(device, &fdInfo, fd);
     if (res != VK_SUCCESS || *fd < 0)

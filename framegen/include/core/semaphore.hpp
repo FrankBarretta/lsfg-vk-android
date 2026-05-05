@@ -50,6 +50,9 @@ namespace LSFG::Core {
         ///
         void signal(const Core::Device& device, uint64_t value) const;
 
+	///Export to SYNC_FD
+        int exportFd(const Core::Device& device) const;
+
         ///
         /// Wait for the semaphore to reach a specific value.
         ///

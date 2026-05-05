@@ -91,10 +91,8 @@ LsContext::LsContext(const Hooks::DeviceInfo& info, VkSwapchainKHR swapchain,
     // initialize lsfg
     auto* lsfgInitialize = LSFG_3_1::initialize;
     auto* lsfgDeleteContext = LSFG_3_1::deleteContext;
-    if (conf.performance) {
         lsfgInitialize = LSFG_3_1P::initialize;
         lsfgDeleteContext = LSFG_3_1P::deleteContext;
-    }
 
     setenv("DISABLE_LSFG", "1", 1); // NOLINT
 
@@ -115,12 +113,7 @@ LsContext::LsContext(const Hooks::DeviceInfo& info, VkSwapchainKHR swapchain,
         outAhbs.push_back(this->out_n.at(i).getAhb());
 
     int32_t ctxId;
-    if (conf.performance)
         ctxId = LSFG_3_1P::createContextFromAHB(
-            this->frame_0.getAhb(), this->frame_1.getAhb(),
-            outAhbs, extent, format);
-    else
-        ctxId = LSFG_3_1::createContextFromAHB(
             this->frame_0.getAhb(), this->frame_1.getAhb(),
             outAhbs, extent, format);
 
@@ -157,11 +150,9 @@ LsContext::LsContext(const Hooks::DeviceInfo& info, VkSwapchainKHR swapchain,
     auto* lsfgInitialize = LSFG_3_1::initialize;
     auto* lsfgCreateContext = LSFG_3_1::createContext;
     auto* lsfgDeleteContext = LSFG_3_1::deleteContext;
-    if (conf.performance) {
         lsfgInitialize = LSFG_3_1P::initialize;
         lsfgCreateContext = LSFG_3_1P::createContext;
         lsfgDeleteContext = LSFG_3_1P::deleteContext;
-    }
 
     setenv("DISABLE_LSFG", "1", 1); // NOLINT
 
@@ -241,18 +232,12 @@ VkResult LsContext::present(const Hooks::DeviceInfo& info, const void* pNext, Vk
     // 2. Tell framegen to generate intermediary frames
     //    presentContext(id, -1, {}) — no semaphore FDs, synchronous
     std::vector<int> noOutSems;  // empty
-    if (conf.performance)
         LSFG_3_1P::presentContext(*this->lsfgCtxId, -1, noOutSems);
-    else
-        LSFG_3_1::presentContext(*this->lsfgCtxId, -1, noOutSems);
 
     // 3. Wait for framegen's GPU work to finish before reading output images.
     //    framegen uses its own VkDevice internally, so we need waitIdle()
     //    to ensure cross-device synchronization.
-    if (conf.performance)
         LSFG_3_1P::waitIdle();
-    else
-        LSFG_3_1::waitIdle();
 
     // 4. Copy generated frames to swapchain images and present them
     for (size_t i = 0; i < static_cast<size_t>(conf.multiplier - 1); i++) {
@@ -319,9 +304,8 @@ VkResult LsContext::present(const Hooks::DeviceInfo& info, const void* pNext, Vk
 #else
     // Desktop Linux path: OPAQUE_FD semaphore-based synchronization
 
-    // 1. copy swapchain image to frame_0/frame_1
-    int preCopySemaphoreFd{};
-    pass.preCopySemaphores.at(0) = Mini::Semaphore(info.device, &preCopySemaphoreFd);
+    // --- STEP 1: PRE-COPY (CAPTURE) ---
+    pass.preCopySemaphores.at(0) = Mini::Semaphore(info.device);
     pass.preCopySemaphores.at(1) = Mini::Semaphore(info.device);
     pass.preCopyBuf = Mini::CommandBuffer(info.device, this->cmdPool);
     pass.preCopyBuf.begin();
@@ -335,91 +319,119 @@ VkResult LsContext::present(const Hooks::DeviceInfo& info, const void* pNext, Vk
 
     pass.preCopyBuf.end();
 
-    std::vector<VkSemaphore> gameRenderSemaphores2 = gameRenderSemaphores;
-    if (this->frameIdx > 0)
-        gameRenderSemaphores2.emplace_back(this->passInfos.at((this->frameIdx - 1) % 8)
-            .preCopySemaphores.at(1).handle());
-    pass.preCopyBuf.submit(info.queue.second,
-        gameRenderSemaphores2,
-        { pass.preCopySemaphores.at(0).handle(),
-          pass.preCopySemaphores.at(1).handle() });
-
-    // 2. render intermediary frames
-    std::vector<int> renderSemaphoreFds(conf.multiplier - 1);
-    for (size_t i = 0; i < (conf.multiplier - 1); ++i)
-        pass.renderSemaphores.at(i) = Mini::Semaphore(info.device, &renderSemaphoreFds.at(i));
-
-    if (conf.performance)
-        LSFG_3_1P::presentContext(*this->lsfgCtxId,
-            preCopySemaphoreFd,
-            renderSemaphoreFds);
-    else
-        LSFG_3_1::presentContext(*this->lsfgCtxId,
-            preCopySemaphoreFd,
-            renderSemaphoreFds);
-
-    for (size_t i = 0; i < (conf.multiplier - 1); i++) {
-        // 3. acquire next swapchain image
-        pass.acquireSemaphores.at(i) = Mini::Semaphore(info.device);
-        uint32_t imageIdx{};
-        auto res = Layer::ovkAcquireNextImageKHR(info.device, this->swapchain, UINT64_MAX,
-            pass.acquireSemaphores.at(i).handle(), VK_NULL_HANDLE, &imageIdx);
-        if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)
-            throw LSFG::vulkan_error(res, "Failed to acquire next swapchain image");
-
-        // 4. copy output image to swapchain image
-        pass.postCopySemaphores.at(i) = Mini::Semaphore(info.device);
-        pass.prevPostCopySemaphores.at(i) = Mini::Semaphore(info.device);
-        pass.postCopyBufs.at(i) = Mini::CommandBuffer(info.device, this->cmdPool);
-        pass.postCopyBufs.at(i).begin();
-
-        Utils::copyImage(pass.postCopyBufs.at(i).handle(),
-            this->out_n.at(i).handle(),
-            this->swapchainImages.at(imageIdx),
-            this->extent.width, this->extent.height,
-            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-            false, true);
-
-        pass.postCopyBufs.at(i).end();
-        pass.postCopyBufs.at(i).submit(info.queue.second,
-            { pass.acquireSemaphores.at(i).handle(),
-              pass.renderSemaphores.at(i).handle() },
-            { pass.postCopySemaphores.at(i).handle(),
-              pass.prevPostCopySemaphores.at(i).handle() });
-
-        // 5. present swapchain image
-        std::vector<VkSemaphore> waitSemaphores{ pass.postCopySemaphores.at(i).handle() };
-        if (i != 0) waitSemaphores.emplace_back(pass.prevPostCopySemaphores.at(i - 1).handle());
-
-        const VkPresentInfoKHR presentInfo{
-            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-            .pNext = i == 0 ? pNext : nullptr, // only set on first present
-            .waitSemaphoreCount = static_cast<uint32_t>(waitSemaphores.size()),
-            .pWaitSemaphores = waitSemaphores.data(),
-            .swapchainCount = 1,
-            .pSwapchains = &this->swapchain,
-            .pImageIndices = &imageIdx,
-        };
-        res = Layer::ovkQueuePresentKHR(queue, &presentInfo);
-        if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)
-            throw LSFG::vulkan_error(res, "Failed to present swapchain image");
+    // --- STEP 2: BUILD WAIT LIST (Original logic + NULL checks) ---
+    std::vector<VkSemaphore> waitSems;
+    for (auto s : gameRenderSemaphores) {
+        if (s != VK_NULL_HANDLE) waitSems.push_back(s);
+    }
+    if (this->frameIdx > 0) {
+        VkSemaphore prev = this->passInfos.at((this->frameIdx - 1) % 8).preCopySemaphores.at(1).handle();
+        if (prev != VK_NULL_HANDLE) waitSems.push_back(prev);
     }
 
-    // 6. present actual next frame
-    VkSemaphore lastPrevPostCopySemaphore =
-        pass.prevPostCopySemaphores.at(conf.multiplier - 1 - 1).handle();
-    const VkPresentInfoKHR presentInfo{
+    // --- STEP 3: BUILD SIGNAL LIST ---
+    std::vector<VkSemaphore> signalSems;
+    if (pass.preCopySemaphores.at(0).handle() != VK_NULL_HANDLE)
+        signalSems.push_back(pass.preCopySemaphores.at(0).handle());
+    if (pass.preCopySemaphores.at(1).handle() != VK_NULL_HANDLE)
+        signalSems.push_back(pass.preCopySemaphores.at(1).handle());
+
+    // --- STEP 4: SUBMIT FIRST ---
+    pass.preCopyBuf.submit(info.queue.second, waitSems, signalSems);
+
+    // --- STEP 5: EXPORT SYNC FD (The Fix) ---
+    int preCopySemaphoreFd = -1;
+    pass.preCopySemaphores.at(0).exportSyncFd(info.device, &preCopySemaphoreFd);
+
+    // --- STEP 6: LSFG & INTERMEDIARY FRAMES ---
+    std::vector<int> renderSemaphoreFds;
+    if (conf.multiplier > 1) {
+        //printf("[LSFG_DEBUG] Entering multiplier > 1 block (Frame: %llu)\n", (unsigned long long)this->frameIdx); fflush(stdout);
+
+        renderSemaphoreFds.resize(conf.multiplier - 1, -1);
+        for (size_t i = 0; i < (conf.multiplier - 1); ++i) {
+            pass.renderSemaphores.at(i) = Mini::Semaphore(info.device);
+            pass.renderSemaphores.at(i).exportSyncFd(info.device, &renderSemaphoreFds.at(i));
+        }
+
+            LSFG_3_1P::presentContext(*this->lsfgCtxId, preCopySemaphoreFd, renderSemaphoreFds);
+
+        // Immediate cleanup of FDs to try and stretch the life of the process
+        for (int &fd : renderSemaphoreFds) { if (fd >= 0) { close(fd); fd = -1; } }
+        if (preCopySemaphoreFd >= 0) { close(preCopySemaphoreFd); preCopySemaphoreFd = -1; }
+
+        for (size_t i = 0; i < (conf.multiplier - 1); i++) {
+            //printf("[LSFG_DEBUG] Loop %zu: Acquire\n", i); fflush(stdout);
+            pass.acquireSemaphores.at(i) = Mini::Semaphore(info.device);
+            uint32_t imageIdx{};
+            Layer::ovkAcquireNextImageKHR(info.device, this->swapchain, UINT64_MAX,
+                pass.acquireSemaphores.at(i).handle(), VK_NULL_HANDLE, &imageIdx);
+
+            //printf("[LSFG_DEBUG] Loop %zu: Recording Copy\n", i); fflush(stdout);
+            pass.postCopySemaphores.at(i) = Mini::Semaphore(info.device);
+            pass.postCopyBufs.at(i) = Mini::CommandBuffer(info.device, this->cmdPool);
+
+            pass.postCopyBufs.at(i).begin();
+            Utils::copyImage(pass.postCopyBufs.at(i).handle(),
+                this->out_n.at(i).handle(),
+                this->swapchainImages.at(imageIdx),
+                this->extent.width, this->extent.height,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                false, true);
+            pass.postCopyBufs.at(i).end();
+
+            // RAW SUBMISSION - The part that worked
+            //printf("[LSFG_DEBUG] Loop %zu: Raw Submit\n", i); fflush(stdout);
+            VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            VkCommandBuffer cb = pass.postCopyBufs.at(i).handle();
+            VkSemaphore waitSem = pass.acquireSemaphores.at(i).handle();
+            VkSemaphore sigSem = pass.postCopySemaphores.at(i).handle();
+
+            VkSubmitInfo subInfo{
+                .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                .waitSemaphoreCount = (waitSem != VK_NULL_HANDLE ? 1u : 0u),
+                .pWaitSemaphores = &waitSem,
+                .pWaitDstStageMask = &waitStage,
+                .commandBufferCount = 1,
+                .pCommandBuffers = &cb,
+                .signalSemaphoreCount = (sigSem != VK_NULL_HANDLE ? 1u : 0u),
+                .pSignalSemaphores = &sigSem
+            };
+
+            Layer::ovkQueueSubmit(info.queue.second, 1, &subInfo, VK_NULL_HANDLE);
+
+            //printf("[LSFG_DEBUG] Loop %zu: Present\n", i); fflush(stdout);
+            const VkPresentInfoKHR loopPresentInfo{
+                .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+                .waitSemaphoreCount = (sigSem != VK_NULL_HANDLE ? 1u : 0u),
+                .pWaitSemaphores = &sigSem,
+                .swapchainCount = 1,
+                .pSwapchains = &this->swapchain,
+                .pImageIndices = &imageIdx,
+            };
+            Layer::ovkQueuePresentKHR(queue, &loopPresentInfo);
+        }
+    }
+
+    // FINAL FRAME
+    //printf("[LSFG_DEBUG] Final Frame Present\n"); fflush(stdout);
+    VkSemaphore finalWait = (conf.multiplier > 1) ?
+        pass.postCopySemaphores.at(conf.multiplier - 2).handle() :
+        pass.preCopySemaphores.at(0).handle();
+
+    const VkPresentInfoKHR finalPresentInfo{
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &lastPrevPostCopySemaphore,
+        .waitSemaphoreCount = (finalWait != VK_NULL_HANDLE ? 1u : 0u),
+        .pWaitSemaphores = &finalWait,
         .swapchainCount = 1,
         .pSwapchains = &this->swapchain,
         .pImageIndices = &presentIdx,
     };
-    auto res = Layer::ovkQueuePresentKHR(queue, &presentInfo);
-    if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)
-        throw LSFG::vulkan_error(res, "Failed to present swapchain image");
 
+    auto res = Layer::ovkQueuePresentKHR(queue, &finalPresentInfo);
+        // --- AGGRESSIVE BYPASS TEST ---
+    // Instead of sleep, we waste cycles to ensure the driver has
+    // time to process the command stream.
     this->frameIdx++;
     return res;
 #endif
