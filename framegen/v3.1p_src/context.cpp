@@ -223,6 +223,18 @@ void Context::present(Vulkan& vk,
     this->frameIdx++;
 }
 
+void Context::waitLastPresented(Vulkan& vk) {
+    // See the v3.1 Context::waitLastPresented for the rationale. Waits the
+    // just-presented slot's completion fences (which gate this frame's passes
+    // and the AHB external-release barriers) instead of the whole device.
+    if (this->frameIdx == 0)
+        return;
+    auto& data = this->data.at((this->frameIdx - 1) % 8);
+    for (auto& fence : data.completionFences)
+        if (!fence.wait(vk.device, UINT64_MAX))
+            throw LSFG::vulkan_error(VK_TIMEOUT, "waitLastPresented fence timed out");
+}
+
 #ifdef __ANDROID__
 
 #include <android/hardware_buffer.h>

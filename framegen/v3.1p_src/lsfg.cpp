@@ -119,4 +119,11 @@ void LSFG_3_1P::waitIdle() {
     if (!device.has_value()) return;
     vkDeviceWaitIdle(device->device.handle());
 }
+
+void LSFG_3_1P::waitContextIdle(int32_t id) {
+    if (!device.has_value()) return;
+    auto it = contexts.find(id);
+    if (it == contexts.end()) return;
+    it->second.waitLastPresented(*device);
+}
 #endif

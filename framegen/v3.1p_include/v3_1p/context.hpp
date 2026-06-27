@@ -62,6 +62,15 @@ namespace LSFG_3_1P {
         void present(Vulkan& vk,
             int inSem, const std::vector<int>& outSem);
 
+        ///
+        /// Block until the GPU work submitted by the most recent present() has
+        /// completed. Waits only on this context's last-presented slot's
+        /// completion fences — a targeted alternative to vkDeviceWaitIdle.
+        ///
+        /// @throws LSFG::vulkan_error if a fence wait fails (e.g. DEVICE_LOST).
+        ///
+        void waitLastPresented(Vulkan& vk);
+
         // Trivially copyable, moveable and destructible
         Context(const Context&) = default;
         Context& operator=(const Context&) = default;

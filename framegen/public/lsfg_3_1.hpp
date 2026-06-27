@@ -97,11 +97,23 @@ namespace LSFG_3_1 {
 #ifdef __ANDROID__
     /// Block until framegen's internal Vulkan device is idle. Used by the
     /// Android wrapper to sync between its own device (which writes input
-    /// AHBs) and framegen's device (which reads them) — without an explicit
-    /// shared semaphore this is the only safe way to avoid a write-after-read
-    /// race on the shared AHardwareBuffer storage.
+    /// AHBs) and framegen's device (which reads them) when no shared semaphore
+    /// is wired up. This is a whole-device barrier; prefer waitContextIdle when
+    /// you only need the most-recently-presented context's work to finish.
     __attribute__((visibility("default")))
     void waitIdle();
+
+    /// Block until the GPU work submitted by the most recent presentContext(id)
+    /// has completed, waiting only on that context's last-presented completion
+    /// fences instead of the whole framegen device (vkDeviceWaitIdle). Those
+    /// fences gate exactly that frame's input read, output write, and the AHB
+    /// external-ownership release barriers, so it gives the same
+    /// write-after-read safety for the shared AHardwareBuffer storage without
+    /// flushing unrelated work on the device.
+    ///
+    /// @throws LSFG::vulkan_error if a fence wait fails (e.g. DEVICE_LOST).
+    __attribute__((visibility("default")))
+    void waitContextIdle(int32_t id);
 #endif
 
 }

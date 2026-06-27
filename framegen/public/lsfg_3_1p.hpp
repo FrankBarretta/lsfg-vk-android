@@ -85,6 +85,11 @@ namespace LSFG_3_1P {
     /// Block until framegen's internal Vulkan device is idle. See LSFG_3_1::waitIdle.
     __attribute__((visibility("default")))
     void waitIdle();
+
+    /// Block on the most-recently-presented context's completion fences only,
+    /// instead of the whole device. See LSFG_3_1::waitContextIdle.
+    __attribute__((visibility("default")))
+    void waitContextIdle(int32_t id);
 #endif
 
 }
