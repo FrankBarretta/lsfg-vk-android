@@ -146,10 +146,31 @@ Device::Device(const Instance& instance, uint64_t deviceUUID) {
         enabledExtensions.push_back(extension);
     }
 
-    const bool hasRobustness2 =
-        hasExtension(availableExtensions, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
-    if (hasRobustness2) {
-        enabledExtensions.push_back(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+    // Advertising VK_EXT_robustness2 does not imply nullDescriptor support: the
+    // three features of the struct are independent and each one is optional, so
+    // requesting nullDescriptor=VK_TRUE without querying it first is invalid
+    // usage. When the feature is absent we take the 1x1 fallback-descriptor path.
+    bool hasRobustness2 = false;
+    if (hasExtension(availableExtensions, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)) {
+        VkPhysicalDeviceRobustness2FeaturesEXT r2Probe{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+        };
+        VkPhysicalDeviceFeatures2 r2Feats{
+            .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = &r2Probe,
+        };
+        vkGetPhysicalDeviceFeatures2(*physicalDevice, &r2Feats);
+        LSFG_FRAMEGEN_LOGI(
+            "robustness2 features: robustBufferAccess2=%d robustImageAccess2=%d nullDescriptor=%d",
+            (int)r2Probe.robustBufferAccess2, (int)r2Probe.robustImageAccess2,
+            (int)r2Probe.nullDescriptor);
+        hasRobustness2 = r2Probe.nullDescriptor == VK_TRUE;
+        if (hasRobustness2) {
+            enabledExtensions.push_back(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
+        } else {
+            LSFG_FRAMEGEN_LOGW(
+                "VK_EXT_robustness2 advertised without nullDescriptor; using fallback descriptor");
+        }
     }
 
     // The compute chain (BarrierBuilder, external acquire/release) calls
